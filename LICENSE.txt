@@ -1,0 +1,25 @@
+License for the RNN tool for forest modeling
+
+Copyright (c) 2023 Liheng Zhong, Hang Zhou, Liang Wei*
+
+*correspondence: liangwei@alumni.uidaho.edu
+
+
+### The RNN (a recurrent neural network) module in this package (rnn_3pg.py) has been registered at the National Copyright Administration of the People's Republic of China On February 21, 2024; Certificate of Computer Software Copyright Number: RZDZ No. 12693961; registration No.: 2024SR0290088.
+
+Please follow CC BY-NC license for using this software. 
+
+### CC BY-NC
+
+This license enables reusers to distribute, remix, adapt, and build upon the material in any medium or format for noncommercial purposes only, and only so long as attribution is given to the creator. CC BY-NC includes the following elements:
+ BY: credit must be given to the creator.
+ NC: Only noncommercial uses of the work are permitted.
+
+
+### The Python version of 3-PG is in the public domain, which was first published in Wei, L., et al. (2018). "Forest productivity varies with soil moisture more than temperature in a small montane watershed." Agricultural and Forest Meteorology 259: 211-221. 
+
+3-PG was originally published by Landsberg, J. J. and R. H. Waring (1997). "A generalised model of forest productivity using simplified concepts of radiation-use efficiency, carbon balance and partitioning." Forest Ecology and Management 95(3): 209-228.
+
+Please check the website for more 3-PG information: https://3pg.forestry.ubc.ca/software/
+
+### THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

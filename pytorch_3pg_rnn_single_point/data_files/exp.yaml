@@ -1,0 +1,44 @@
+mode_Simulation:
+    0 # single point site
+io:
+    fpath_input:
+        "input.txt"
+    fpath_output:
+        null
+    fpath_target:
+        "train.txt"
+time_range: # for month, 0 to 11
+    StartAge: 0         # age of trees at start/end of run 
+    EndAge: 80 
+    InitialYear: 1930   # year and month of initial observation
+    InitialMonth: 0
+    EndYear: 2011
+    EndMonth: 11
+    YearPlanted: 1930   # year and month trees were planted
+    MonthPlanted: 0
+initial_state:
+    InitialWF: 0.001
+    InitialWR: 0.001
+    InitialWS: 0.001
+    InitialStocking: 408.0 # only consider remaining large trees
+    InitialASW: 200.0
+site_paras:
+    elev: 1431
+    lat: 47.16843258
+    MaxASW: 200.0       # maximum available soil water
+    MinASW: 0.0         # minimum available soil water
+    SWconst0: 0.5       # SW constants are 0.7 for sand,0.6 for sandy-loam, 
+                        # 0.5 for clay-loam, 0.4 for clay
+    SWpower0: 5.0       # Powers in the eqn for SW modifiers are 9 for sand,
+                        #  7 for sandy-loam, 5 for clay-loam and 3 for clay
+    # Parameters for CanopyProduction/ResponseFunction/SoilNutrition
+    FR: 0.44            # current site fertility rating, move to site_specific.py
+    # Parameters for CanopyProduction/ResponseFunction/Aage
+    MaxAge: 250         # Determines rate of "physiological decline" of forest
+paras:
+    alpha: 0.0653
+    fullCanAge: 27
+    MaxCond: 0.0135
+    CoeffCond: 0.08
+    wSx1000: 3000       # turn off self-thinning
+
