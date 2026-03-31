@@ -1,195 +1,216 @@
-# %%
+"""Biomass Partitioning Module for the 3-PG model.
+
+Allocates net primary production (NPP) to foliage, roots, and stems,
+computes litterfall and root turnover, and calculates stable carbon
+isotope discrimination (delta-13C).
+
+References:
+    Landsberg & Waring (1997), Forest Ecology and Management 95, 209-228.
+    Wei et al. — delta-13C tissue calculation extensions.
 """
-Biomass Partitioning Module
-"""
+
 import numpy as np
 
-import torch
+from const import (
+    STANDARD_PRESSURE, PRESSURE_SCALE_HEIGHT,
+    MOL_AIR_VOLUME, KELVIN_OFFSET,
+)
+from torch_compat import exp, log, clip
 
-exp = torch.exp
-log = torch.log
-clip = torch.clamp
 
+def calc_canopy_conductance(T_av, LAI, modifier_physiology, TK2, TK3, MaxCond, LAIgcx):
+    """Canopy conductance for water vapour (m/s).
 
-def cacl_canopy_conductance(T_av, LAI, modifier_physiology, TK2, TK3, MaxCond, LAIgcx):
-    # calculate canopy conductance from stomatal conductance
-    # with added temperature modifier_ Liang Wei
-    canopy_conductance = (
+    Scales maximum stomatal conductance by temperature, LAI, and
+    physiological modifiers.
+
+    Args:
+        T_av: Mean monthly temperature (deg C).
+        LAI: Leaf area index (m2/m2).
+        modifier_physiology: Combined physiological modifier (0-1).
+        TK2, TK3: Temperature modifier coefficients.
+        MaxCond: Maximum canopy conductance (m/s).
+        LAIgcx: LAI at which conductance reaches MaxCond.
+
+    Returns:
+        Canopy conductance (m/s), floored at 0.0001.
+    """
+    conductance = (
         clip(TK2 + TK3 * T_av, 0, 1)
         * MaxCond
         * modifier_physiology
         * clip(LAI / LAIgcx, -np.inf, 1)
     )
-    #     if canopy_conductance == 0:
-    #         canopy_conductance = 0.0001
-    canopy_conductance = clip(canopy_conductance, 0.0001, None)
-    return canopy_conductance
+    return clip(conductance, 0.0001, None)
 
 
-def calc_biomass_partition(
-    NPP, avDBH, modifier_physiology, m0, FR, pfsConst, pfsPower, pRx, pRn
-):
-    # calculate partitioning coefficients
+def calc_biomass_partition(NPP, avDBH, modifier_physiology, m0, FR, pfsConst, pfsPower, pRx, pRn):
+    """Partition NPP into foliage, root, and stem increments.
+
+    Allocation fractions depend on current DBH (via the foliage:stem ratio)
+    and moisture/age stress (via the physiological modifier).
+
+    Args:
+        NPP: Net primary production (tDM/ha/month).
+        avDBH: Average diameter at breast height (cm).
+        modifier_physiology: Combined physiological modifier (0-1).
+        m0: Soil-nutrition multiplier floor.
+        FR: Fertility rating (0-1).
+        pfsConst, pfsPower: Foliage:stem allometric coefficients.
+        pRx: Maximum root partition fraction.
+        pRn: Minimum root partition fraction.
+
+    Returns:
+        (delWF, delWR, delWS) — biomass increments (tDM/ha/month).
+    """
     m = m0 + (1 - m0) * FR
-    pFS = pfsConst * (avDBH**pfsPower)  # foliage and stem partition
-    pR = pRx * pRn / (pRn + (pRx - pRn) * modifier_physiology * m)  # root partition
-    pS = (1 - pR) / (1 + pFS)  # stem partition
-    pF = 1 - pR - pS  # foliage partition
+    pFS = pfsConst * (avDBH ** pfsPower)
+    pR = pRx * pRn / (pRn + (pRx - pRn) * modifier_physiology * m)
+    pS = (1 - pR) / (1 + pFS)
+    pF = 1 - pR - pS
 
-    # calculate biomass increments
-    delWF = NPP * pF  # foilage
-    delWR = NPP * pR  # root
-    delWS = NPP * pS  # stem
-    # print('pRx', pRx)
-    # print('pRn', pRn)
-    # print('modifier_physiology', modifier_physiology.shape)
-    # print('pR', pR.shape)
+    delWF = NPP * pF
+    delWR = NPP * pR
+    delWS = NPP * pS
     return delWF, delWR, delWS
 
 
 def calc_litter_and_rootturnover(WF, WR, stand_age, gammaFx, gammaF0, tgammaF, Rttover):
-    # calculate litterfall & root turnover -
+    """Monthly litterfall and root turnover.
+
+    Litterfall rate increases with age from gammaF0 towards gammaFx,
+    reaching its median at age = tgammaF.
+
+    Args:
+        WF: Foliage biomass (tDM/ha).
+        WR: Root biomass (tDM/ha).
+        stand_age: Stand age (years).
+        gammaFx: Maximum monthly litterfall rate.
+        gammaF0: Initial monthly litterfall rate.
+        tgammaF: Age at which rate reaches median (years).
+        Rttover: Monthly root turnover fraction.
+
+    Returns:
+        (delLitter, delRoots) — biomass losses (tDM/ha/month).
+    """
     Littfall = (
-        gammaFx
-        * gammaF0
+        gammaFx * gammaF0
         / (
             gammaF0
             + (gammaFx - gammaF0)
             * exp(-12 * log(1 + gammaFx / gammaF0) * stand_age / tgammaF)
         )
     )
-
     delLitter = Littfall * WF
     delRoots = Rttover * WR
-
-    # print('Littfall', Littfall.shape)
-    # print('WF', WF.shape)
-    # print('delLitter', delLitter.shape)
     return delLitter, delRoots
 
 
-def update_endofmonth_biomass(
-    WF, WR, WS, TotalLitter, delWF, delWR, delWS, delLitter, delRoots
-):
-    # Calculate end-of-month biomass
-    # print('WS before', WS.shape)
+def update_endofmonth_biomass(WF, WR, WS, TotalLitter, delWF, delWR, delWS, delLitter, delRoots):
+    """Update biomass pools at end of month.
+
+    Returns:
+        (WF, WR, WS, TotalW, TotalLitter).
+    """
     WF = WF + delWF - delLitter
     WR = WR + delWR - delRoots
     WS = WS + delWS
     TotalW = WF + WR + WS
-    # print('delLitter', delLitter.shape)
-    # print('TotalLitter before', TotalLitter.shape)
     TotalLitter = TotalLitter + delLitter
-    # print('TotalLitter after', TotalLitter.shape)
-    # print('WS after', WS.shape)
     return WF, WR, WS, TotalW, TotalLitter
 
 
 def calc_d13c(
-    T_av,
-    CaMonthly,
-    D13Catm,
-    elev,
-    GPPmolc,
-    days_in_month,
-    canopy_conductance,
-    RGcGW,
-    D13CTissueDif,
-    aFracDiffu,
-    bFracRubi,
+    T_av, CaMonthly, D13Catm, elev, GPPmolc, days_in_month,
+    canopy_conductance, RGcGW, D13CTissueDif, aFracDiffu, bFracRubi,
 ):
-    # calculating d13C by Liang Wei
+    """Compute delta-13C of new photosynthate and tree-ring tissue.
 
-    # Air pressure, kpa
-    AirPressure = 101.3 * exp(-1 * elev / 8200)
-    # Convert Unit of Atmospheric C, a ppm to part/part
-    AtmCa = CaMonthly * 0.000001
-    # Canopy conductance for water vapor in mol/m2s, unit conversion
+    Based on the Farquhar model of carbon isotope discrimination:
+        delta-13C = delta-13C_atm - a - (b - a) * (Ci / Ca)
+
+    where Ci is intercellular CO2 derived from GPP and canopy conductance.
+
+    Args:
+        T_av: Mean temperature (deg C).
+        CaMonthly: Atmospheric CO2 concentration (ppm).
+        D13Catm: delta-13C of atmospheric CO2 (per mille).
+        elev: Site elevation (m).
+        GPPmolc: Gross primary production (mol C / m2 / month).
+        days_in_month: Days in the current month.
+        canopy_conductance: Canopy conductance for water vapour (m/s).
+        RGcGW: Ratio of CO2 conductance to H2O conductance (~0.66).
+        D13CTissueDif: Tissue-photosynthate fractionation offset (per mille).
+        aFracDiffu: Fractionation during diffusion through stomata (per mille).
+        bFracRubi: Fractionation by Rubisco (per mille).
+
+    Returns:
+        (D13CTissue, InterCiPPM) — tissue delta-13C and intercellular CO2 (ppm).
+    """
+    AirPressure = STANDARD_PRESSURE * exp(-1 * elev / PRESSURE_SCALE_HEIGHT)
+    AtmCa = CaMonthly * 1e-6  # ppm -> mol fraction
+
+    # Canopy conductance for water vapour -> mol/m2/s
     GwMol = (
-        canopy_conductance * 44.6 * (273.15 / (273.15 + T_av)) * (AirPressure / 101.3)
+        canopy_conductance
+        * MOL_AIR_VOLUME
+        * (KELVIN_OFFSET / (KELVIN_OFFSET + T_av))
+        * (AirPressure / STANDARD_PRESSURE)
     )
-    # Canopy conductance for CO2 in mol/m2s
-    GcMol = GwMol * RGcGW
+    GcMol = GwMol * RGcGW  # CO2 conductance
 
-    # GPP per second. Unit: mol/m2 s. GPPmolc divide by 24 hour/day and 3600 s/hr
+    # GPP per second (mol/m2/s)
     GPPmolsec = GPPmolc / (days_in_month * 24 * 3600)
 
-    # Calculating monthly average intercellular CO2 concentration. Ci = Ca - A/g
+    # Intercellular CO2: Ci = Ca - A/g
     InterCi = AtmCa - GPPmolsec / GcMol
-    InterCiPPM = InterCi * 1000000
+    InterCiPPM = InterCi * 1e6
 
-    # Calculating monthly d13C of new photosynthate, = d13Catm- a-(b-a) (ci/ca)
+    # delta-13C of new photosynthate
     D13CNewPS = D13Catm - aFracDiffu - (bFracRubi - aFracDiffu) * (InterCi / AtmCa)
     D13CTissue = D13CNewPS + D13CTissueDif
     return D13CTissue, InterCiPPM
 
 
-def biomass_partion(
-    T_av,
-    LAI,
-    elev,
-    CaMonthly,
-    D13Catm,
-    WF,
-    WR,
-    WS,
-    TotalLitter,
-    NPP,
-    GPPmolc,
-    stand_age,
-    days_in_month,
-    avDBH,
-    modifier_physiology,
-    paras,
-    site_paras,
+def biomass_partition(
+    T_av, LAI, elev, CaMonthly, D13Catm,
+    WF, WR, WS, TotalLitter,
+    NPP, GPPmolc, stand_age, days_in_month, avDBH,
+    modifier_physiology, paras, site_paras,
 ):
-    # print('TotalLitter initial', TotalLitter.shape)
-    TK2 = paras.TK2
-    TK3 = paras.TK3
-    MaxCond = paras.MaxCond
-    LAIgcx = paras.LAIgcx
+    """Main entry point for the Biomass Partitioning module.
 
-    m0 = paras.m0
-    FR = site_paras.FR  # [4]
-    pRx = paras.pRx
-    pRn = paras.pRn
-    pfsConst = paras.pfsConst
-    pfsPower = paras.pfsPower
+    Computes canopy conductance, allocates NPP, updates biomass pools,
+    and calculates delta-13C.
 
-    gammaFx = paras.gammaFx
-    gammaF0 = paras.gammaF0
-    tgammaF = paras.tgammaF
-    Rttover = paras.Rttover
-
-    RGcGW = paras.RGcGW
-    D13CTissueDif = paras.D13CTissueDif
-    aFracDiffu = paras.aFracDiffu
-    bFracRubi = paras.bFracRubi
-
-    canopy_conductance = cacl_canopy_conductance(
-        T_av, LAI, modifier_physiology, TK2, TK3, MaxCond, LAIgcx
+    Returns:
+        (WF, WR, WS, TotalW, TotalLitter, D13CTissue, InterCiPPM,
+         canopy_conductance).
+    """
+    canopy_conductance = calc_canopy_conductance(
+        T_av, LAI, modifier_physiology,
+        paras.TK2, paras.TK3, paras.MaxCond, paras.LAIgcx,
     )
+
     delWF, delWR, delWS = calc_biomass_partition(
-        NPP, avDBH, modifier_physiology, m0, FR, pfsConst, pfsPower, pRx, pRn
+        NPP, avDBH, modifier_physiology,
+        paras.m0, site_paras.FR, paras.pfsConst, paras.pfsPower,
+        paras.pRx, paras.pRn,
     )
+
     delLitter, delRoots = calc_litter_and_rootturnover(
-        WF, WR, stand_age, gammaFx, gammaF0, tgammaF, Rttover
+        WF, WR, stand_age,
+        paras.gammaFx, paras.gammaF0, paras.tgammaF, paras.Rttover,
     )
+
     WF, WR, WS, TotalW, TotalLitter = update_endofmonth_biomass(
-        WF, WR, WS, TotalLitter, delWF, delWR, delWS, delLitter, delRoots
+        WF, WR, WS, TotalLitter, delWF, delWR, delWS, delLitter, delRoots,
     )
+
     D13CTissue, InterCiPPM = calc_d13c(
-        T_av,
-        CaMonthly,
-        D13Catm,
-        elev,
-        GPPmolc,
-        days_in_month,
+        T_av, CaMonthly, D13Catm, elev, GPPmolc, days_in_month,
         canopy_conductance,
-        RGcGW,
-        D13CTissueDif,
-        aFracDiffu,
-        bFracRubi,
+        paras.RGcGW, paras.D13CTissueDif, paras.aFracDiffu, paras.bFracRubi,
     )
 
     return WF, WR, WS, TotalW, TotalLitter, D13CTissue, InterCiPPM, canopy_conductance
